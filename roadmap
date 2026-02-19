@@ -1,0 +1,123 @@
+# Development Roadmap
+
+## Phase 1 — Current Sprint: Quantum Foundation
+
+### ✅ Done
+- [x] Repo scaffolding & architecture
+- [x] Lorenz gauge coordinate system (`LorenzFrame`)
+- [x] Physical constants & derived quantities
+- [x] Analytical Landau level wavefunctions ψₙ
+- [x] Split-operator TDSE solver skeleton
+- [x] Precomputation pipeline → HDF5/NPZ output
+- [x] Three.js point cloud renderer with GLSL shaders
+- [x] Temperature-weighted initial state (Boltzmann populations)
+
+### 🔄 Next Up (Phase 1 completion)
+- [ ] **Fix magnetic cross-term in split-operator step**
+  - Current: simplified harmonic approximation
+  - Target: full (p-eA)² expansion with Peierls phase factors
+  - Reference: Feit, Fleck & Steiger (1982), J. Comput. Phys.
+
+- [ ] **Validate Landau level energies numerically**
+  - Compute ⟨E⟩ for each eigenstate, compare to Eₙ = ℏωc(n+1/2)
+  - Should match to < 1% error at resolution N=64
+
+- [ ] **Three.js data loader**
+  - Load .npz from public/ directory
+  - Parse binary format → Float32Array
+  - Interpolate between frames for smooth animation
+
+- [ ] **Interactive parameter controls (React)**
+  - B field slider (0.1 → 10 T)
+  - Temperature slider (0 → 300 K)
+  - Landau level selector
+  - Colormap toggle (plasma / phase / viridis)
+  - Threshold slider for probability cutoff
+
+- [ ] **Vercel deployment**
+  - next.config.js with large file support
+  - CDN for precomputed data files (or Supabase storage)
+
+---
+
+## Phase 2 — Hydrogen Atom & Pairing
+
+### Hydrogen Orbitals (3D)
+- Implement spherical harmonics Yₗₘ(θ,φ)
+- Full hydrogen wavefunctions ψₙₗₘ(r,θ,φ)
+- Radial equation solver (Laguerre polynomials)
+- Volume render s, p, d, f orbitals
+
+### H₂ Molecule
+- Two-center wavefunction in Born-Oppenheimer approximation
+- Bonding orbital: ψ₊ = ψ₁ + ψ₂ (constructive interference)
+- Antibonding orbital: ψ₋ = ψ₁ - ψ₂ (node between nuclei)
+- Potential energy surface: E(R) as function of nuclear separation R
+- Interactive nuclear separation slider
+
+### Magnetic Effects on H₂
+- Zeeman splitting: each orbital shifted by ±μB·B·mₗ
+- Visualization of orbital symmetry breaking under field
+- Paschen-Back regime at high B
+
+---
+
+## Phase 3 — Chemistry
+
+### Electron Diffusion in Molecular Potentials
+- Multi-center Coulomb potentials
+- Molecular orbital theory (LCAO)
+- Visualize HOMO/LUMO for simple molecules
+
+### Radical Pair Reactions
+- Singlet/triplet state interconversion in magnetic field
+- Relevant to: enzyme reactions, avian compass navigation
+- Interesting new-particle angle: radical pair mechanism may 
+  explain anomalous magnetic effects at biological scales
+
+---
+
+## Phase 4 — Classical Fluid & MHD
+
+### Classical Diffusion
+- Fick's law solver: ∂C/∂t = D∇²C
+- Stochastic particle trajectories (Langevin dynamics)
+- Connection to quantum: Wigner function, decoherence
+
+### Magnetohydrodynamics
+- Lorentz force: F = J×B
+- Alfvén waves in magnetized plasma
+- Foundation for stellar dynamo / convection zone models
+
+---
+
+## Phase 5 — Stellar & Planetary
+
+### Stellar Convection
+- Mixing length theory
+- Radiative vs convective transport
+- Magnetic field amplification (α-Ω dynamo)
+
+### Atmosphere Emergence
+- Stellar EUV heating → photodissociation
+- Molecular escape (Jeans escape)
+- Atmospheric chemistry network
+
+---
+
+## Scientific Validation Targets
+
+| Quantity | Analytical | Numerical Target |
+|----------|-----------|-----------------|
+| Landau E₀ at B=1T | 0.0579 meV | < 1% error |
+| H atom E₁s | -13.6 eV | < 0.1% error |
+| H₂ bond length | 0.074 nm | < 2% error |
+| Cyclotron freq at B=1T | 1.76×10¹¹ rad/s | exact |
+
+---
+
+## Publication / Outreach Goals
+- arXiv preprint: "Interactive 3D Quantum Simulation Platform for Education"
+- Submission to Journal of Open Source Software (JOSS)
+- Feature on Physics Today / Quanta Magazine outreach
+- Integration with elliottelford.com astrophysics platform
