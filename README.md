@@ -6,7 +6,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 
-> *Simulating quantum mechanical behavior from subatomic particles to emergent atmospheric phenomena — scientifically rigorous, visually stunning, publicly open.*
+> *Simulating quantum mechanical behavior from subatomic particles to emergent atmospheric phenomena — scientific, stunning and publicly open.*
 
 ---
 
