@@ -1,30 +1,30 @@
+'use client'
+
 // visualization/src/components/QuantumScene.tsx
-// 
-// Main 3D scene for quantum wavefunction visualization.
-// Renders precomputed |ψ|² probability density as volumetric point cloud
-// with animated frame interpolation.
 //
-// Landau levels appear as beautiful toroidal/ring distributions in x-y plane,
-// with free-particle behavior along z.
+// Main 3D scene for quantum wavefunction visualization.
+// Renders |ψ|² probability density as a volumetric point cloud.
+// Landau levels appear as Gaussian blobs (n=0) or ring distributions (n≥1).
 
 import * as THREE from 'three'
-import { useRef, useEffect, useMemo, useState } from 'react'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { useRef, useEffect } from 'react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface SimulationFrame {
-  t: number          // time in seconds
-  probability: Float32Array  // flattened [Nx*Ny*Nz] probability density
+  t: number
+  probability: Float32Array   // flattened [Nx*Ny*Nz]
   psi_real?: Float32Array
   psi_imag?: Float32Array
-  energy?: number    // ⟨E⟩ in eV
+  energy?: number             // ⟨E⟩ in eV
 }
 
 export interface SimulationMetadata {
   Nx: number
   Ny: number
   Nz: number
-  x_nm: Float32Array    // coordinate axes in nm
+  x_nm: Float32Array
   y_nm: Float32Array
   z_nm: Float32Array
   B_tesla: number
@@ -38,17 +38,18 @@ export interface QuantumSceneProps {
   metadata: SimulationMetadata
   currentFrame?: number
   autoPlay?: boolean
-  frameRate?: number          // frames per second for animation
+  frameRate?: number
   colormap?: 'plasma' | 'viridis' | 'phase'
-  threshold?: number          // minimum |ψ|² to render (0-1, normalized)
+  threshold?: number
   pointSize?: number
   showAxes?: boolean
-  showLandauRings?: boolean    // overlay analytical Landau ring positions
+  showLandauRings?: boolean
 }
 
 // ── Colormaps ──────────────────────────────────────────────────────────────────
 
-const PLASMA_COLORS = [
+// Perceptually uniform Matplotlib plasma (dark→yellow)
+const PLASMA_STOPS = [
   [0.050383, 0.029803, 0.527975],
   [0.494877, 0.012525, 0.657865],
   [0.798216, 0.280197, 0.469538],
@@ -56,134 +57,123 @@ const PLASMA_COLORS = [
   [0.940015, 0.975158, 0.131326],
 ]
 
-function plasmaColor(t: number): THREE.Color {
-  const n = PLASMA_COLORS.length - 1
+// Perceptually uniform Matplotlib viridis (dark blue→yellow)
+const VIRIDIS_STOPS = [
+  [0.267004, 0.004874, 0.329415],
+  [0.229739, 0.322361, 0.545706],
+  [0.127568, 0.566949, 0.550556],
+  [0.369214, 0.788888, 0.382914],
+  [0.993248, 0.906157, 0.143936],
+]
+
+function sampleColormap(stops: number[][], t: number): THREE.Color {
+  const n = stops.length - 1
   const i = Math.min(Math.floor(t * n), n - 1)
   const f = t * n - i
-  const [r1, g1, b1] = PLASMA_COLORS[i]
-  const [r2, g2, b2] = PLASMA_COLORS[Math.min(i + 1, n)]
-  return new THREE.Color(
-    r1 + f * (r2 - r1),
-    g1 + f * (g2 - g1),
-    b1 + f * (b2 - b1)
-  )
+  const [r1, g1, b1] = stops[i]
+  const [r2, g2, b2] = stops[i + 1]
+  return new THREE.Color(r1 + f * (r2 - r1), g1 + f * (g2 - g1), b1 + f * (b2 - b1))
 }
 
-// ── Point Cloud Builder ────────────────────────────────────────────────────────
+// ── Point cloud builder ────────────────────────────────────────────────────────
 
 function buildPointCloud(
   frame: SimulationFrame,
   meta: SimulationMetadata,
   threshold: number,
   colormap: string,
-  phase?: Float32Array
 ): { positions: Float32Array; colors: Float32Array; count: number } {
   const { Nx, Ny, Nz, x_nm, y_nm, z_nm } = meta
   const prob = frame.probability
-  
-  // Find max for normalization
+
   let maxProb = 0
-  for (let i = 0; i < prob.length; i++) {
-    if (prob[i] > maxProb) maxProb = prob[i]
-  }
-  
+  for (let i = 0; i < prob.length; i++) if (prob[i] > maxProb) maxProb = prob[i]
   if (maxProb === 0) return { positions: new Float32Array(0), colors: new Float32Array(0), count: 0 }
-  
-  // Count points above threshold
+
+  const absThresh = threshold * maxProb
   let count = 0
-  const absThreshold = threshold * maxProb
-  for (let i = 0; i < prob.length; i++) {
-    if (prob[i] > absThreshold) count++
-  }
-  
+  for (let i = 0; i < prob.length; i++) if (prob[i] > absThresh) count++
+
   const positions = new Float32Array(count * 3)
   const colors = new Float32Array(count * 3)
   let idx = 0
-  
+
   for (let ix = 0; ix < Nx; ix++) {
     for (let iy = 0; iy < Ny; iy++) {
       for (let iz = 0; iz < Nz; iz++) {
-        const flatIdx = ix * Ny * Nz + iy * Nz + iz
-        const p = prob[flatIdx]
-        
-        if (p <= absThreshold) continue
-        
-        const t = p / maxProb  // normalized 0-1
-        
-        positions[idx * 3 + 0] = x_nm[ix]
+        const fi = ix * Ny * Nz + iy * Nz + iz
+        const p = prob[fi]
+        if (p <= absThresh) continue
+
+        const t = Math.pow(p / maxProb, 0.5)  // sqrt stretch for dynamic range
+
+        positions[idx * 3]     = x_nm[ix]
         positions[idx * 3 + 1] = y_nm[iy]
         positions[idx * 3 + 2] = z_nm[iz]
-        
+
         let color: THREE.Color
-        if (colormap === 'phase' && phase) {
-          // Color by quantum phase — beautiful interference patterns
-          const phi = phase[flatIdx]  // -π to π
+        if (colormap === 'phase' && frame.psi_real && frame.psi_imag) {
+          const phi = Math.atan2(frame.psi_imag[fi], frame.psi_real[fi])
           const hue = (phi + Math.PI) / (2 * Math.PI)
-          color = new THREE.Color().setHSL(hue, 0.9, 0.3 + 0.4 * t)
+          color = new THREE.Color().setHSL(hue, 0.9, 0.3 + 0.35 * t)
+        } else if (colormap === 'viridis') {
+          color = sampleColormap(VIRIDIS_STOPS, t)
         } else {
-          // Plasma colormap by probability magnitude
-          color = plasmaColor(Math.pow(t, 0.5))  // sqrt for better dynamic range
+          color = sampleColormap(PLASMA_STOPS, t)
         }
-        
-        colors[idx * 3 + 0] = color.r
+
+        colors[idx * 3]     = color.r
         colors[idx * 3 + 1] = color.g
         colors[idx * 3 + 2] = color.b
-        
+
         idx++
       }
     }
   }
-  
+
   return { positions, colors, count }
 }
 
-// ── Vertex Shader ──────────────────────────────────────────────────────────────
+// ── GLSL shaders ───────────────────────────────────────────────────────────────
 
-const VERTEX_SHADER = `
-  attribute vec3 color;
+const VERT = `
+  attribute vec3 aColor;
   varying vec3 vColor;
   varying float vAlpha;
-  uniform float pointSize;
-  uniform float time;
-  
+  uniform float uPointSize;
+  uniform float uTime;
+
   void main() {
-    vColor = color;
-    
-    // Subtle breathing animation — size pulses with probability magnitude
-    float brightness = length(color);
-    float pulse = 1.0 + 0.1 * sin(time * 3.0 + position.z * 0.5);
-    vAlpha = brightness * pulse;
-    
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = pointSize * pulse * (300.0 / -mvPosition.z);
-    gl_Position = projectionMatrix * mvPosition;
+    vColor = aColor;
+    float brightness = length(aColor);
+    float pulse = 1.0 + 0.08 * sin(uTime * 2.5 + position.z * 0.4);
+    vAlpha = clamp(brightness * pulse, 0.0, 1.0);
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = uPointSize * pulse * (300.0 / -mvPos.z);
+    gl_Position = projectionMatrix * mvPos;
   }
 `
 
-// ── Fragment Shader ────────────────────────────────────────────────────────────
-
-const FRAGMENT_SHADER = `
+const FRAG = `
   varying vec3 vColor;
   varying float vAlpha;
-  
+
   void main() {
-    // Circular points with soft edges
     vec2 coord = gl_PointCoord - vec2(0.5);
-    float dist = length(coord);
-    if (dist > 0.5) discard;
-    
-    float alpha = vAlpha * (1.0 - smoothstep(0.3, 0.5, dist));
+    float d = length(coord);
+    if (d > 0.5) discard;
+    float alpha = vAlpha * (1.0 - smoothstep(0.3, 0.5, d));
     gl_FragColor = vec4(vColor, alpha);
   }
 `
 
-// ── Main Component ─────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export function QuantumScene({
   frames,
   metadata,
   currentFrame = 0,
-  autoPlay = true,
+  autoPlay = false,
   frameRate = 10,
   colormap = 'plasma',
   threshold = 0.05,
@@ -192,170 +182,179 @@ export function QuantumScene({
   showLandauRings = true,
 }: QuantumSceneProps) {
   const mountRef = useRef<HTMLDivElement>(null)
-  const sceneRef = useRef<THREE.Scene>()
-  const rendererRef = useRef<THREE.WebGLRenderer>()
-  const cameraRef = useRef<THREE.PerspectiveCamera>()
-  const pointsRef = useRef<THREE.Points>()
-  const materialRef = useRef<THREE.ShaderMaterial>()
-  const frameIdxRef = useRef(currentFrame)
-  const animFrameRef = useRef<number>()
-  const lastFrameTimeRef = useRef(0)
-  
-  // ── Scene setup ──────────────────────────────────────────────────────────────
+  // Keep latest props accessible inside the animation loop without re-subscribing
+  const propsRef = useRef({ frames, metadata, colormap, threshold, pointSize, autoPlay, frameRate, currentFrame })
+  propsRef.current = { frames, metadata, colormap, threshold, pointSize, autoPlay, frameRate, currentFrame }
+
+  // Re-run scene setup when metadata changes (grid size / B / n changed)
   useEffect(() => {
-    if (!mountRef.current) return
-    
-    const width = mountRef.current.clientWidth
-    const height = mountRef.current.clientHeight
-    
-    // Scene
-    const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0x000510)
-    sceneRef.current = scene
-    
-    // Camera
-    const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 10000)
-    const boxSize = Math.max(
-      metadata.x_nm[metadata.x_nm.length - 1] - metadata.x_nm[0],
-      metadata.y_nm[metadata.y_nm.length - 1] - metadata.y_nm[0],
-    )
-    camera.position.set(boxSize * 1.5, boxSize * 1.0, boxSize * 1.5)
-    camera.lookAt(0, 0, 0)
-    cameraRef.current = camera
-    
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-    renderer.setSize(width, height)
+    const mount = mountRef.current
+    if (!mount) return
+
+    let width = mount.clientWidth
+    let height = mount.clientHeight
+
+    // ── Renderer ────────────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
     renderer.setPixelRatio(window.devicePixelRatio)
-    mountRef.current.appendChild(renderer.domElement)
-    rendererRef.current = renderer
-    
-    // Axes
+    renderer.setSize(width, height)
+    renderer.setClearColor(0x000510, 1)
+    mount.appendChild(renderer.domElement)
+
+    // ── Scene ───────────────────────────────────────────────────────
+    const scene = new THREE.Scene()
+
+    // ── Camera ──────────────────────────────────────────────────────
+    const meta = propsRef.current.metadata
+    const boxSize = Math.max(
+      meta.x_nm[meta.x_nm.length - 1] - meta.x_nm[0],
+      meta.y_nm[meta.y_nm.length - 1] - meta.y_nm[0],
+    )
+    const camera = new THREE.PerspectiveCamera(55, width / height, 0.1, 100_000)
+    camera.position.set(boxSize * 1.4, boxSize * 0.9, boxSize * 1.4)
+    camera.lookAt(0, 0, 0)
+
+    // ── OrbitControls ───────────────────────────────────────────────
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.dampingFactor = 0.06
+    controls.autoRotate = true
+    controls.autoRotateSpeed = 0.6
+
+    // ── Axes helper ─────────────────────────────────────────────────
     if (showAxes) {
-      const axesHelper = new THREE.AxesHelper(boxSize * 0.6)
-      scene.add(axesHelper)
+      scene.add(new THREE.AxesHelper(boxSize * 0.5))
     }
-    
-    // Ambient light for any mesh objects
-    scene.add(new THREE.AmbientLight(0xffffff, 0.3))
-    
-    // Landau rings (analytical positions)
-    if (showLandauRings && metadata.B_tesla > 0) {
-      const lB_nm = Math.sqrt(1.054e-34 / (1.602e-19 * metadata.B_tesla)) * 1e9
-      const ringGeom = new THREE.TorusGeometry(lB_nm * Math.sqrt(2 * metadata.n_landau + 1), 0.3, 8, 64)
-      const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, opacity: 0.3, transparent: true })
+
+    // ── Landau ring (analytical peak radius for n-th level) ─────────
+    if (showLandauRings && meta.B_tesla > 0) {
+      // Peak of |ψₙ|² in x-y plane: r_peak = lB·√(2n+1) for symmetric gauge
+      // For n=0 this gives lB — marks the 1/e² extent of the Gaussian
+      const lB_nm = Math.sqrt(1.054571817e-34 / (1.602176634e-19 * meta.B_tesla)) * 1e9
+      const rPeak = lB_nm * Math.sqrt(2 * meta.n_landau + 1)
+      const tubeR = Math.max(0.2, rPeak * 0.015)
+      const ringGeom = new THREE.TorusGeometry(rPeak, tubeR, 8, 128)
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0x00ffcc,
+        wireframe: false,
+        opacity: 0.25,
+        transparent: true,
+      })
       const ring = new THREE.Mesh(ringGeom, ringMat)
       ring.rotation.x = Math.PI / 2
       scene.add(ring)
     }
-    
-    // Initial point cloud
+
+    // ── Shader material ─────────────────────────────────────────────
     const material = new THREE.ShaderMaterial({
-      vertexShader: VERTEX_SHADER,
-      fragmentShader: FRAGMENT_SHADER,
+      vertexShader: VERT,
+      fragmentShader: FRAG,
       uniforms: {
-        pointSize: { value: pointSize },
-        time: { value: 0 },
+        uPointSize: { value: pointSize },
+        uTime: { value: 0 },
       },
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     })
-    materialRef.current = material
-    
-    if (frames.length > 0) {
-      updatePointCloud(frames[0], scene, material)
-    }
-    
-    // Animation loop
-    let lastTime = 0
-    const animate = (timestamp: number) => {
-      animFrameRef.current = requestAnimationFrame(animate)
-      
-      // Update shader time for breathing effect
-      if (material.uniforms) {
-        material.uniforms.time.value = timestamp * 0.001
+
+    // ── Point cloud ─────────────────────────────────────────────────
+    let currentPoints: THREE.Points | null = null
+
+    function rebuildCloud(frame: SimulationFrame) {
+      if (currentPoints) {
+        scene.remove(currentPoints)
+        currentPoints.geometry.dispose()
       }
-      
+      const { positions, colors, count } = buildPointCloud(
+        frame,
+        propsRef.current.metadata,
+        propsRef.current.threshold,
+        propsRef.current.colormap,
+      )
+      if (count === 0) return
+      const geom = new THREE.BufferGeometry()
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geom.setAttribute('aColor', new THREE.BufferAttribute(colors, 3))
+      currentPoints = new THREE.Points(geom, material)
+      scene.add(currentPoints)
+    }
+
+    const { frames } = propsRef.current
+    if (frames.length > 0) rebuildCloud(frames[0])
+
+    // ── Animation loop ──────────────────────────────────────────────
+    let rafId = 0
+    let frameIdx = currentFrame
+    let lastFrameSwap = 0
+
+    const animate = (ts: number) => {
+      rafId = requestAnimationFrame(animate)
+
+      const p = propsRef.current
+      material.uniforms.uPointSize.value = p.pointSize
+      material.uniforms.uTime.value = ts * 0.001
+
+      controls.update()
+
       // Auto-advance frames
-      if (autoPlay && frames.length > 1) {
-        const frameDt = 1000 / frameRate
-        if (timestamp - lastFrameTimeRef.current > frameDt) {
-          frameIdxRef.current = (frameIdxRef.current + 1) % frames.length
-          updatePointCloud(frames[frameIdxRef.current], scene, material)
-          lastFrameTimeRef.current = timestamp
+      if (p.autoPlay && p.frames.length > 1) {
+        const interval = 1000 / p.frameRate
+        if (ts - lastFrameSwap > interval) {
+          frameIdx = (frameIdx + 1) % p.frames.length
+          rebuildCloud(p.frames[frameIdx])
+          lastFrameSwap = ts
         }
       }
-      
-      // Slow auto-rotate
-      if (sceneRef.current) {
-        sceneRef.current.rotation.y += 0.002
-      }
-      
+
       renderer.render(scene, camera)
     }
-    
-    requestAnimationFrame(animate)
-    
+    rafId = requestAnimationFrame(animate)
+
+    // ── Resize handler ──────────────────────────────────────────────
+    const onResize = () => {
+      if (!mount) return
+      width = mount.clientWidth
+      height = mount.clientHeight
+      camera.aspect = width / height
+      camera.updateProjectionMatrix()
+      renderer.setSize(width, height)
+    }
+    window.addEventListener('resize', onResize)
+
+    // ── Cleanup ─────────────────────────────────────────────────────
     return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+      cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', onResize)
+      controls.dispose()
       renderer.dispose()
-      mountRef.current?.removeChild(renderer.domElement)
+      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
     }
-  }, [metadata])
-  
-  function updatePointCloud(
-    frame: SimulationFrame,
-    scene: THREE.Scene,
-    material: THREE.ShaderMaterial
-  ) {
-    // Remove old points
-    if (pointsRef.current) {
-      scene.remove(pointsRef.current)
-      pointsRef.current.geometry.dispose()
-    }
-    
-    const phaseArr = frame.psi_real && frame.psi_imag
-      ? (() => {
-          const phase = new Float32Array(frame.psi_real.length)
-          for (let i = 0; i < phase.length; i++) {
-            phase[i] = Math.atan2(frame.psi_imag![i], frame.psi_real[i])
-          }
-          return phase
-        })()
-      : undefined
-    
-    const { positions, colors, count } = buildPointCloud(
-      frame, metadata, threshold, colormap, phaseArr
-    )
-    
-    if (count === 0) return
-    
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-    
-    const points = new THREE.Points(geometry, material)
-    scene.add(points)
-    pointsRef.current = points
-  }
-  
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metadata, showAxes, showLandauRings])
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
-      
-      {/* HUD overlay */}
-      <div style={{
-        position: 'absolute', top: 16, left: 16,
-        color: 'rgba(0,255,200,0.8)', fontFamily: 'monospace', fontSize: 12,
-        pointerEvents: 'none',
-      }}>
+
+      {/* HUD */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 16,
+          left: 16,
+          color: 'rgba(0,255,200,0.75)',
+          fontFamily: "'Courier New', monospace",
+          fontSize: 12,
+          lineHeight: 1.8,
+          pointerEvents: 'none',
+        }}
+      >
         <div>B = {metadata.B_tesla.toFixed(1)} T</div>
         <div>T = {metadata.T_kelvin.toFixed(1)} K</div>
-        <div>n = {metadata.n_landau} (Landau level)</div>
-        <div>frame {frameIdxRef.current + 1}/{frames.length}</div>
-        {frames[frameIdxRef.current]?.energy && (
-          <div>⟨E⟩ = {frames[frameIdxRef.current].energy?.toFixed(4)} eV</div>
+        <div>n = {metadata.n_landau} (Landau)</div>
+        {frames[0]?.energy !== undefined && (
+          <div>⟨E⟩ = {(frames[0].energy! * 1000).toFixed(4)} meV</div>
         )}
       </div>
     </div>
