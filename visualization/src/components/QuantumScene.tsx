@@ -285,8 +285,13 @@ export function QuantumScene({
 
     // ── Animation loop ──────────────────────────────────────────────
     let rafId = 0
-    let frameIdx = currentFrame
+    let frameIdx = 0
     let lastFrameSwap = 0
+
+    // Track previous values to detect changes that require a cloud rebuild
+    let prevColormap = propsRef.current.colormap
+    let prevThreshold = propsRef.current.threshold
+    let prevFrames = propsRef.current.frames
 
     const animate = (ts: number) => {
       rafId = requestAnimationFrame(animate)
@@ -296,6 +301,19 @@ export function QuantumScene({
       material.uniforms.uTime.value = ts * 0.001
 
       controls.update()
+
+      // Rebuild cloud when colormap, threshold, or frame data changes
+      if (
+        p.colormap !== prevColormap ||
+        p.threshold !== prevThreshold ||
+        p.frames !== prevFrames
+      ) {
+        prevColormap = p.colormap
+        prevThreshold = p.threshold
+        prevFrames = p.frames
+        frameIdx = Math.min(frameIdx, p.frames.length - 1)
+        if (p.frames.length > 0) rebuildCloud(p.frames[frameIdx])
+      }
 
       // Auto-advance frames
       if (p.autoPlay && p.frames.length > 1) {
