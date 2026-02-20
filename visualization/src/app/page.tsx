@@ -11,7 +11,19 @@ import {
 import type { SimulationFrame, SimulationMetadata } from '@/components/QuantumScene'
 
 // Skip SSR — WebGL requires a browser environment
-const QuantumScene = dynamic(() => import('@/components/QuantumScene'), { ssr: false })
+const QuantumScene = dynamic(() => import('@/components/QuantumScene'), {
+  ssr: false,
+  loading: () => (
+    <div style={{
+      width: '100%', height: '100%',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      color: 'rgba(0,255,200,0.5)', fontFamily: 'monospace', fontSize: 13,
+      letterSpacing: 2,
+    }}>
+      INITIALIZING SIMULATION…
+    </div>
+  ),
+})
 
 const E_CHARGE = 1.602176634e-19
 
